@@ -1,0 +1,14 @@
+READ.ME
+
+本作品のソースコードには、重力計算や軌道シミュレーションなどの実装を含んでいます。
+特に以下のクラスにおいて工夫した実装を行っておりますので、ご覧いただけますと幸いです。
+
+・BHOrbitPlayerComponent.cpp
+  ルンゲ＝クッタ法による軌道計算を実装
+
+・BlackHoleComponent.cpp
+  相対論的補正を含む重力計算を実装
+
+・GravityPawnMovement.cpp
+  FloatingPawnMovementを拡張し、重力の影響を受ける移動を実現
+

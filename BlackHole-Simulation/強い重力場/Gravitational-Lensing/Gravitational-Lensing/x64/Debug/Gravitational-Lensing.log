@@ -1,0 +1,6 @@
+﻿  Gravitational-Lensing.cpp
+C:\Users\aqour\Downloads\BlackHole_Gravitational-Lensing\Gravitational-Lensing\Gravitational-Lensing\Gravitational-Lensing.cpp(140,23): error C2039: 'clamp': 'std' のメンバーではありません
+      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\algorithm(225,1):
+      'std' の宣言を確認してください
+  
+C:\Users\aqour\Downloads\BlackHole_Gravitational-Lensing\Gravitational-Lensing\Gravitational-Lensing\Gravitational-Lensing.cpp(140,23): error C3861: 'clamp': 識別子が見つかりませんでした
