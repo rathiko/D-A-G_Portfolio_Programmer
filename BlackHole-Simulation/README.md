@@ -1,4 +1,4 @@
-# BlackHole-RayTracer
+# BlackHole-Simulation
 
 シュワルツシルト時空での光の軌道をRK4で数値計算し、
 ブラックホールの影と降着円盤の見え方を再現したC++のシミュレーションです。
