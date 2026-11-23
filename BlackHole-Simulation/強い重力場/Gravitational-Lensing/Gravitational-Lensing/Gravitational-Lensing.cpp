@@ -7,6 +7,7 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <sstream>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -18,6 +19,7 @@
 //幾何学単位系 M = 1.0
 constexpr double RS = 2.0;				// シュワルツシルト半径
 constexpr double PI = 3.14159265358979; // 円周率
+constexpr double T_scale = 8000.0;		// BHの温度
 
 // -------- Vec3 構造体 --------
 
@@ -81,8 +83,82 @@ Vec3 normalize(const Vec3& a)
 void rhs(double u, double p, double& du, double& dp)
 {
 	du = p;							// du/dphi
-	dp = -u + 1.5 * RS * u * u;		// dp/dhi
+	dp = -u + 1.5 * RS * u * u;		// dp/dphi
 }
+
+// 温度計算
+double diskTemperature(double r, double rin) 
+{
+	double T_disk = T_scale * std::pow((rin / r), 0.75)
+		* std::pow((1 - std::sqrt(rin / r)), 0.25);
+
+	return T_disk;
+}
+
+// 温度で色を判定
+void blackbodycolor(double T, double& red, double& green, double& blue) 
+{
+	double tmpCalc;
+	T = std::clamp(T, 1000.0, 40000.0);
+	double tmp_kelvin = T / 100.0;
+
+	// red
+	if (tmp_kelvin <= 66) {
+		red = 255;
+	}
+	else {
+		tmpCalc = tmp_kelvin - 60;
+		tmpCalc = 329.698727446 * std::pow(tmpCalc, -0.1332047592);
+		red = tmpCalc;
+		if (red < 0) red = 0;
+		if (red > 255) red = 255;
+	}
+
+	// green
+	if (tmp_kelvin <= 66) {
+		tmpCalc = tmp_kelvin;
+		tmpCalc = 99.4708025861 * std::log(tmpCalc) - 161.1195681661;
+		green = tmpCalc;
+		if (green < 0) green = 0;
+		if (green > 255) green = 255;
+	}
+	else {
+		tmpCalc = tmp_kelvin - 60;
+		tmpCalc = 288.1221695283 * std::pow(tmpCalc, -0.0755148492);
+		green = tmpCalc;
+		if (green < 0) green = 0;
+		if (green > 255) green = 255;
+	}
+
+	// blue
+	if (tmp_kelvin >= 66) {
+		blue = 255;
+	}
+	else if (tmp_kelvin <= 19) {
+		blue = 0;
+	}
+	else{
+		tmpCalc = tmp_kelvin - 10;
+		tmpCalc = 138.5177312231 * std::log(tmpCalc) - 305.0447927307;
+		
+		blue = tmpCalc;
+		if (blue < 0) blue = 0;
+		if (blue > 255) blue = 255;
+	}
+	red /= 255;
+	green /= 255;
+	blue /= 255;
+}
+
+
+// 返す情報
+struct RayHit {
+	int result;		// 0:落ちた, 1:脱出, 2:使い切った 3:降着円盤
+	double rHit;	// 円盤にあたった半径
+	double aHit;	// 円盤にあたった位置の角度
+	Vec3 escDir;	// 逃げた方向
+	double bz;		// 光線の角運動量のz成分
+};
 
 
 // -------- camera --------
@@ -103,22 +179,24 @@ int main() {
 		std::cerr << "読み込み失敗: " << stbi_failure_reason() << '\n';
 		return 2;
 	}
-	std::cout << "size: " << skyW << " x "  << skyH << '\n';
+	std::cout << "size: " << skyW << " x " << skyH << '\n';
 
-// -------- 背景の色をとる --------
+	// -------- 背景の色をとる --------
 
 	const int W = 520;
 	const int H = 520;
 	const double aspect = static_cast<double>(W) / H;	// アスペクト比
 	const double tanH = std::tan(fovdeg * PI / 180.0 / 2.0);	// 視野角の半分のtan
 	const Vec3 camHat = (1.0 / r0) * cam;	// カメラ位置ベクトルを正規化
-	const double sqrtF = std::sqrt(1 - RS / r0); // BH中心からカメラへ向かうベクトル
+	const double sqrtF = std::sqrt(1 - RS / r0); // 静止観測者の座標系への補正
 	const double uH = 1.0 / RS;				// 地平面の逆半径
 	const double uEsc = 1.0 / (900.0 * r0); // 脱出判定に使う逆半径
 	const double h0 = 0.012;				// 数値計算の刻み幅
+	const int frame = 90;					// フレーム数
 	const int maxsteps = 6000;				// 最大の積分回数
 	const double rin = 6.0;					// 降着円盤の内側の半径
 	const double rout = 18.0;				// 降着円盤の外側の半径
+	const double T_max = 0.488 * T_scale;
 
 	std::vector<unsigned char> out(W * H * 3, 0);
 
@@ -137,10 +215,105 @@ int main() {
 			rgb[skych] = skydata[(srcY * skyW + srcX) * 3 + skych];
 		}
 
-	};
+		};
+
+	auto traceRay = [&](const Vec3& dir) -> RayHit {
+		RayHit hit;
+		hit.result = 2;
+
+		// 光子の軌道面を張る
+		const double cosRa = dot(dir, camHat);
+		const double sinRa = std::sqrt(std::max(1.0 - cosRa * cosRa, 1e-14));
+		const Vec3 tHat = (1.0 / sinRa) * (dir - cosRa * camHat);
+
+		// 初期条件
+		double u = 1.0 / r0;
+		double up_ = -cosRa * sqrtF / (r0 * sinRa);
+		double b = r0 * sinRa / sqrtF;
+		Vec3 n = cross(camHat, tHat);
+		hit.bz = -b * n.z;
+		double phi = 0.0;
+
+		// -------- RK4で光子の軌道を更新 --------
+
+		for (int step = 0; step < maxsteps; ++step) {
+			double r = 1.0 / u;
+			const double h = h0 / (1.0 + 6.0 * u * u);
+			// 1ステップ前の情報を保存
+			double z_Old = r * (std::cos(phi) * camHat.z + std::sin(phi) * tHat.z);
+			double r_Old = r;
+			double phi_Old = phi;
+
+			// k1
+			double k1u, k1p;
+			rhs(u, up_, k1u, k1p);
+
+			// k2
+			double k2u, k2p;
+			rhs(u + 0.5 * h * k1u, up_ + 0.5 * h * k1p, k2u, k2p);
+
+			// k3
+			double k3u, k3p;
+			rhs(u + 0.5 * h * k2u, up_ + 0.5 * h * k2p, k3u, k3p);
+
+			// k4
+			double k4u, k4p;
+			rhs(u + h * k3u, up_ + h * k3p, k4u, k4p);
+
+			u += (k1u + 2.0 * k2u + 2.0 * k3u + k4u) * (h / 6.0);
+			up_ += (k1p + 2.0 * k2p + 2.0 * k3p + k4p) * (h / 6.0);
+
+			phi += h;
+
+			// 1ステップ更新された情報を保存
+			double r_New = 1.0 / u;
+			double z_New = r_New * (std::cos(phi) * camHat.z + std::sin(phi) * tHat.z);
+
+			// -------- 降着円盤と光線の交差を判定 --------
+
+			// 事象の地平面に到達した場合
+			if (u >= uH) {
+				hit.result = 0;
+				break;
+			}
+
+			// 遠方まで脱出した場合
+			if (u <= uEsc) {
+				hit.result = 1;
+				break;
+			}
+
+			// 光線が円盤の平面を横切った場合
+			if (z_Old * z_New < 0) {
+				double Alpha = z_Old / (z_Old - z_New);
+				double r_i = r_Old + (r_New - r_Old) * Alpha;	// 交差した位置の半径を求める
+				if (rin <= r_i && r_i <= rout) {
+					double phi_hit = phi_Old + (Alpha * h);
+					Vec3 hit_Pos = r_i * (std::cos(phi_hit) * camHat + std::sin(phi_hit) * tHat);
+					double hit_rad = std::atan2(hit_Pos.y, -hit_Pos.x);
+					hit.aHit = hit_rad;
+					hit.rHit = r_i;
+					hit.result = 3;
+					break;
+				}
+			}
+		}
+
+		if (hit.result == 1) {
+			double drdphi = -up_ / (u * u);
+			double r = 1.0 / u;
+			double vR = drdphi * std::cos(phi) - r * std::sin(phi);
+			double vT = drdphi * std::sin(phi) + r * std::cos(phi);
+			hit.escDir = normalize(vR * camHat + vT * tHat);
+
+		}
+		return hit;
+		};
 
 	// -------- 画面の各ピクセルから光線を作る --------
 
+	// 光線を計算して保存するループ
+	std::vector<RayHit> hits(W * H);
 	for (int j = 0; j < H; ++j) {
 		for (int i = 0; i < W; ++i) {
 
@@ -149,123 +322,74 @@ int main() {
 			const double py = (1.0 - 2.0 * (j + 0.5) / H) * tanH;
 			const Vec3 dir = normalize(fwd + px * right + py * up);
 
-			// 光子の軌道面を張る
-			const double cosRa = dot(dir, camHat);
-			const double sinRa = std::sqrt(std::max(1.0 - cosRa * cosRa, 1e-14));
-			const Vec3 tHat = (1.0 / sinRa) * (dir - cosRa * camHat);
+			hits[j * W + i] = traceRay(dir);
+		}
+	}
 
-			// 初期条件
-			double u = 1.0 / r0;
-			double up_ = -cosRa * sqrtF / (r0 * sinRa);
-			double phi = 0.0;
+	// フレームのループ
+	for (int f = 0; f < frame; ++f) {
+		double dt = 1.0;
+		double t = f * dt;
+		for (int j = 0; j < H; ++j) {
+			for (int i = 0; i < W; ++i) {
+				const RayHit& hit = hits[j * W + i];
+				unsigned char rgb[3];
+				switch (hit.result) {
 
-			// -------- RK4で光子の軌道を更新 --------
-
-			int result = 2;
-
-			for (int step = 0; step < maxsteps; ++step) {
-				double r = 1.0 / u;
-				const double h = h0 / (1.0 + 6.0 * u * u);
-				// 1ステップ前の情報を保存
-				double z_Old = r * (std::cos(phi) * camHat.z + std::sin(phi) * tHat.z);
-				double r_Old = r; 
-
-				// k1
-				double k1u, k1p;
-				rhs(u, up_, k1u, k1p);
-
-				// k2
-				double k2u, k2p;
-				rhs(u + 0.5 * h * k1u, up_ + 0.5 * h * k1p, k2u, k2p);
-
-				// k3
-				double k3u, k3p;
-				rhs(u + 0.5 * h * k2u, up_ + 0.5 * h * k2p, k3u, k3p);
-
-				// k4
-				double k4u, k4p;
-				rhs(u + h * k3u, up_ + h * k3p, k4u, k4p);
-
-				u += (k1u + 2.0 * k2u + 2.0 * k3u + k4u) * (h / 6.0);
-				up_ += (k1p + 2.0 * k2p + 2.0 * k3p + k4p) * (h / 6.0);
-
-				phi += h;
-
-				// 1ステップ更新された情報を保存
-				double r_New = 1.0 / u;
-				double z_New = r_New * (std::cos(phi) * camHat.z + std::sin(phi) * tHat.z);
-
-				// -------- 降着円盤と光線の交差を判定 --------
-
-				// 事象の地平面に到達した場合
-				if (u >= uH) {
-					result = 0;
-					break;
-				}
-
-				// 遠方まで脱出した場合
-				if (u <= uEsc) {
-					result = 1;
-					break;
-				}
-
-				// 光線が円盤の平面を横切った場合
-				if (z_Old * z_New < 0){
-					double Alpha = z_Old / (z_Old - z_New);			
-					double r_i = r_Old + (r_New - r_Old) * Alpha;	// 交差した位置の半径を求める
-					if (rin <= r_i && r_i<= rout) {
-						result = 3;
-						break;
-					}
-				}
-
-			}
-
-			unsigned char rgb[3];
-
-			switch (result) {
-				// ブラックホールに捕獲された場合
+					// ブラックホールに捕獲された場合
 				case 0:
 					rgb[0] = 0;
 					rgb[1] = 0;
 					rgb[2] = 0;
 					break;
 
-				// 遠方へ脱出した場合
-				case 1: {
-					double drdphi = -up_ / (u * u);
-					double r = 1.0 / u;
-					double vR = drdphi * std::cos(phi) - r * std::sin(phi);
-					double vT = drdphi * std::sin(phi) + r * std::cos(phi);
-					Vec3 escDir = normalize(vR * camHat + vT * tHat);
-
-					Samplesky(escDir, rgb);
+					// 遠方へ脱出した場合
+				case 1:
+					Samplesky(hit.escDir, rgb);
 					break;
-				}
 
-				// 最大ステップまでに分類されなかった
+					// 最大ステップまでに分類されなかった（デバッグ用）
 				case 2:
 					rgb[0] = 255;
 					rgb[1] = 0;
 					rgb[2] = 0;
 					break;
-				
-				// 降着円盤に到達した
-				case 3:
-					rgb[0] = 150;
-					rgb[1] = 100;
-					rgb[2] = 0;
-					break;
-			}
 
-			// 出力画像にピクセルを書き込む
-			for (int ch = 0; ch < 3; ++ch) {
-				out[(j * W + i) * 3 + ch] = rgb[ch];
+					// 降着円盤に到達した
+				case 3: {
+					double bh_tmp = diskTemperature(hit.rHit, rin);
+					double cr, cg, cb;
+					blackbodycolor(bh_tmp, cr, cg, cb);
+					double bh_light = std::pow((bh_tmp / T_max), 4.0);
+					double ang_vel = 1 / std::sqrt(hit.rHit * hit.rHit * hit.rHit);
+					int k = 12;
+					double stripe = std::sin(k * (hit.aHit - ang_vel * t));
+					stripe = (stripe + 1) / 2;
+					rgb[0] = static_cast<unsigned char>(255 * cr * bh_light * (0.5 + 0.5 * stripe));
+					rgb[1] = static_cast<unsigned char>(255 * cg * bh_light * (0.5 + 0.5 * stripe));
+					rgb[2] = static_cast<unsigned char>(255 * cb * bh_light * (0.5 + 0.5 * stripe));
+					break;
+				}
+
+				default:
+					rgb[0] = 255; rgb[1] = 0; rgb[2] = 255;
+					break;
+				}
+
+				// 出力画像にピクセルを書き込む
+				for (int ch = 0; ch < 3; ++ch) {
+					out[(j * W + i) * 3 + ch] = rgb[ch];
+				}
 			}
 		}
+
+		// -------- 出力 --------
+
+		std::ostringstream oss;
+		oss << "frames/frame_" << std::setw(3) << std::setfill('0') << f << ".png";
+		stbi_write_png(oss.str().c_str(), W, H, 3, out.data(), W * 3);
 	}
 
-	stbi_write_png("output.png", W, H, 3, out.data(), W * 3);
 	stbi_image_free(skydata);
 
 	return 0;
