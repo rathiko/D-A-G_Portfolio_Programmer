@@ -6,8 +6,8 @@
 ## 作品一覧
 
 | 作品 | 内容 | 使用技術 |
-| [① GalacticMoon](GalacticMoon/) | 惑星やブラックホールの重力に引っ張られながら戦う3Dシューティング | UE5, C++, Blueprint |
-| [② NewMoon](NewMoon/) | 浮遊物の衝突を力積で自作した、無重力ステルスのミニゲーム | UE5, C++, Blueprint |
+| [① GalacticMoon](Source_Portfolio①_GalacticMoon/) | 惑星やブラックホールの重力に引っ張られながら戦う3Dシューティング | UE5, C++, Blueprint |
+| [② NewMoon](Source_Portfolio②_NewMoon/) | 浮遊物の衝突を力積で自作した、無重力ステルスのミニゲーム | UE5, C++, Blueprint |
 | [③ BlackHole-Simulation](BlackHole-Simulation/) | 光の軌道をRK4で計算し、ブラックホールの影と降着円盤の見え方を再現 | C++ |
 
 ![ブラックホールのシミュレーション](BlackHole-Simulation/images/output.png)
