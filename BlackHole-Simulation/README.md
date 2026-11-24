@@ -18,4 +18,4 @@ C++(標準ライブラリ)、Visual Studio 2022、stb_image
 
 ## 参考
 - https://github.com/ShaunFell/Gravitational-Lensing-Visualization
-- https://github.com/YIHnb/schwarzschild-ray-tracer
+- https://github.com/YIHnb/schwarzschild-ray-tracer/blob/main/ref/grbh.py
